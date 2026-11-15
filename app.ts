@@ -1,49 +1,48 @@
-// The starter's HTTP surface, exactly as it ships: a health probe and an API root, and a JSON 404
-// for everything else. The contest's real surface — git smart HTTP, REST v3 resources, GraphQL v4 and
-// the MCP endpoint — is what you add (README.md names it, and the rules link below says what scores).
-//
-// app.ts is deliberately separate from main.ts: this is the server, the file you grow; main.ts is the
-// entry <-> env lifecycle and should stay as it is.
-
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { ApiError, Store } from './store.ts';
+import { rest } from './rest.ts';
 
-const JSON_TYPE = 'application/json; charset=utf-8';
-
-/** Answer one request with a JSON body; `headers` go beside the JSON ones. */
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Readonly<Record<string, string>> = {}): void {
-  const text = `${JSON.stringify(body)}\n`;
-  res.writeHead(status, { 'content-type': JSON_TYPE, 'content-length': Buffer.byteLength(text), ...headers });
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const text = status === 204 ? '' : JSON.stringify(body);
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(text) });
   res.end(text);
 }
-
-/** The path of a request URL, or '/' when it does not parse (never a throw from a request). */
-function pathOf(req: IncomingMessage): string {
-  try {
-    return new URL(req.url ?? '/', 'http://entry').pathname;
-  } catch {
-    return '/';
+async function readBody(req: IncomingMessage): Promise<any> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 16 * 1024 * 1024) throw new ApiError(413, 'Request body too large');
+    chunks.push(chunk);
   }
+  if (!size) return {};
+  try {
+    const value = JSON.parse(Buffer.concat(chunks).toString());
+    if (value === null || typeof value !== 'object') throw new Error('Expected JSON object');
+    return value;
+  }
+  catch { throw new ApiError(400, 'Malformed JSON'); }
 }
-
-/** Build the server. It binds nothing until the caller listens; the entry listens on an ephemeral port. */
 export function createApp(): Server {
-  return createServer((req: IncomingMessage, res: ServerResponse) => {
-    const path = pathOf(req);
-    const method = req.method ?? 'GET';
-
-    // The env's boot check calls this twice: 200 {"ok":true}.
-    if (method === 'GET' && path === '/healthz') {
-      sendJson(res, 200, { ok: true });
-      return;
+  const store = new Store();
+  const token = process.env.MAKEFUN_SHOP_TOKEN;
+  let requestId = 0;
+  return createServer(async (req, res) => {
+    res.setHeader('X-GitHub-Request-Id', (++requestId).toString(16));
+    try {
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'entry'}`);
+      const method = req.method || 'GET';
+      if (method === 'GET' && url.pathname === '/healthz') { sendJson(res, 200, { ok: true }); return; }
+      const api = url.pathname.startsWith('/api/') || url.pathname === '/mcp' || url.pathname.includes('.git/');
+      if (api && (!token || req.headers.authorization !== `Bearer ${token}`)) throw new ApiError(401, 'Bad credentials');
+      if (url.pathname.startsWith('/api/v3')) {
+        const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) ? await readBody(req) : {};
+        const [status, value] = rest(store, method, url, body, res);
+        sendJson(res, status, value); return;
+      }
+      throw new ApiError(404, 'Not Found');
+    } catch (error) {
+      sendJson(res, error instanceof ApiError ? error.status : 500, { message: error instanceof Error ? error.message : 'Internal Server Error' });
     }
-
-    // The GitHub API root: a 200 with the token's scopes, as api.github.com answers GET /.
-    if (method === 'GET' && (path === '/api/v3' || path === '/api/v3/')) {
-      sendJson(res, 200, { current_user_url: '/api/v3/user', rate_limit_url: '/api/v3/rate_limit' }, { 'x-oauth-scopes': 'repo, read:org' });
-      return;
-    }
-
-    // Everything else, every method: GitHub's 404 body.
-    sendJson(res, 404, { message: 'Not Found' });
   });
 }
