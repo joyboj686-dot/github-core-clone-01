@@ -85,6 +85,8 @@ async function main(): Promise<void> {
   });
   const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('the server did not bind an ephemeral TCP port');
+  // Keep the ephemeral port visible in stderr for local debugging.
+  process.stderr.write(`[entry] bound ephemeral port ${address.port}\n`);
   process.stdout.write(`[entry] listening on port ${address.port}\n`);
 
   await register(address.port);
