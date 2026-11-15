@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ApiError, Store } from './store.ts';
 import { rest } from './rest.ts';
+import { git } from './git.ts';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = status === 204 ? '' : JSON.stringify(body);
@@ -35,6 +36,7 @@ export function createApp(): Server {
       if (method === 'GET' && url.pathname === '/healthz') { sendJson(res, 200, { ok: true }); return; }
       const api = url.pathname.startsWith('/api/') || url.pathname === '/mcp' || url.pathname.includes('.git/');
       if (api && (!token || req.headers.authorization !== `Bearer ${token}`)) throw new ApiError(401, 'Bad credentials');
+      if (url.pathname.includes('.git/')) { await git(store, req, res, url); return; }
       if (url.pathname.startsWith('/api/v3')) {
         const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) ? await readBody(req) : {};
         const [status, value] = rest(store, method, url, body, res);
