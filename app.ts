@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { ApiError, Store } from './store.ts';
 import { rest } from './rest.ts';
 import { git } from './git.ts';
+import { graphql } from './graphql.ts';
+import { mcp } from './mcp.ts';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const text = status === 204 ? '' : JSON.stringify(body);
@@ -36,6 +38,13 @@ export function createApp(): Server {
       if (method === 'GET' && url.pathname === '/healthz') { sendJson(res, 200, { ok: true }); return; }
       const api = url.pathname.startsWith('/api/') || url.pathname === '/mcp' || url.pathname.includes('.git/');
       if (api && (!token || req.headers.authorization !== `Bearer ${token}`)) throw new ApiError(401, 'Bad credentials');
+      if (method === 'POST' && url.pathname === '/api/graphql') { sendJson(res, 200, graphql(store, await readBody(req))); return; }
+      if (method === 'POST' && url.pathname === '/mcp') {
+        let body;
+        try { body = await readBody(req); }
+        catch { sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return; }
+        const [status, result] = mcp(store, body); sendJson(res, status, result); return;
+      }
       if (url.pathname.includes('.git/')) { await git(store, req, res, url); return; }
       if (url.pathname.startsWith('/api/v3')) {
         const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) ? await readBody(req) : {};
