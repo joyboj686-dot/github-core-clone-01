@@ -1,3 +1,4 @@
+import { collaboration } from './collaboration.ts';
 import type { ServerResponse } from 'node:http';
 import { ApiError, Store, commitFiles, commitInfo, filesAt, putObject, resolveRef, treeEntries } from './store.ts';
 
@@ -26,6 +27,8 @@ export function rest(store: Store, method: string, url: URL, body: any, res: Ser
   if (!match) throw new ApiError(404, 'Not Found');
   const [, owner, name, route = ''] = match;
   const repo = store.getRepo(owner, name);
+  const result = collaboration(store, repo, method, route, body, url);
+  if (result) return result;
   if (!route) {
     if (method === 'GET') return [200, store.repoView(repo)];
     if (method === 'PATCH') {

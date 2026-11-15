@@ -4,6 +4,8 @@ export interface GitObject { type: string; data: Buffer }
 export interface Repository {
   id: number; name: string; private: boolean; description: string; default_branch: string;
   refs: Map<string, string>; objects: Map<string, GitObject>;
+  labels: Map<string, any>; issues: Map<number, any>; pulls: Map<number, any>;
+  comments: Map<number, any[]>; nextNumber: number;
 }
 export class ApiError extends Error {
   status: number;
@@ -94,7 +96,7 @@ export class Store {
   createRepo(input: any): Repository {
     if (typeof input.name !== 'string' || !/^[\w.-]{1,100}$/.test(input.name)) throw new ApiError(422, 'Invalid repository name');
     if (this.repos.has(input.name)) throw new ApiError(422, 'Repository already exists');
-    const repo: Repository = { id: this.nextId++, name: input.name, private: !!input.private, description: input.description || '', default_branch: 'main', refs: new Map(), objects: new Map() };
+    const repo: Repository = { id: this.nextId++, name: input.name, private: !!input.private, description: input.description || '', default_branch: 'main', refs: new Map(), objects: new Map(), labels: new Map(), issues: new Map(), pulls: new Map(), comments: new Map(), nextNumber: 1 };
     this.repos.set(repo.name, repo);
     return repo;
   }
