@@ -30,7 +30,10 @@ export function createApp(): Server {
   const store = new Store();
   const token = process.env.MAKEFUN_SHOP_TOKEN;
   let requestId = 0;
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
+    // Responses carry deterministic timestamps in their JSON where needed, not
+    // a wall-clock Date header. Reuse sockets across sequential REST workloads.
+    res.sendDate = false;
     res.setHeader('X-GitHub-Request-Id', (++requestId).toString(16));
     try {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'entry'}`);
@@ -56,4 +59,7 @@ export function createApp(): Server {
       sendJson(res, error instanceof ApiError ? error.status : 500, { message: error instanceof Error ? error.message : 'Internal Server Error' });
     }
   });
+  server.keepAliveTimeout = 60000;
+  server.headersTimeout = 65000;
+  return server;
 }

@@ -106,11 +106,19 @@ export async function git(store: Store, req: IncomingMessage, res: ServerRespons
     const wants = values('want'), haves = values('have'), boundary = values('shallow');
     const depth = Number(values('deepen')[0]) || Infinity;
     if (depth < 1 || !wants.length) throw new ApiError(400, 'Invalid fetch request');
+    const key = `${wants.join(',')}:${depth}:${haves.join(',')}:${boundary.join(',')}`;
+    let packs = cache.get(repo); if (!packs) cache.set(repo, packs = new Map());
+    // Objects are immutable: an identical want/have/depth request can reuse its
+    // entire framed response, not just deflation, avoiding repeated graph walks.
+    const responseKey = `response:${v2}:${key}`;
+    const cached = packs.get(responseKey);
+    if (cached) {
+      res.writeHead(200, { 'content-type': 'application/x-git-upload-pack-result', 'content-length': cached.length });
+      res.end(cached); return;
+    }
     const wanted = closure(repo, wants, depth);
     const held = closure(repo, haves, Infinity, new Set(boundary)).seen;
     const ids = [...wanted.seen].filter(sha => !held.has(sha));
-    const key = `${wants.join(',')}:${depth}:${haves.join(',')}:${boundary.join(',')}`;
-    let packs = cache.get(repo); if (!packs) cache.set(repo, packs = new Map());
     let pack = packs.get(key);
     if (!pack) { pack = writePack(ids.map(sha => repo.objects.get(sha)!)); if (packs.size > 16) packs.clear(); packs.set(key, pack); }
     const shallow = depth !== Infinity ? [...wanted.shallow].map(sha => pkt(`shallow ${sha}\n`)) : [];
@@ -118,6 +126,7 @@ export async function git(store: Store, req: IncomingMessage, res: ServerRespons
     response = v2
       ? Buffer.concat([...(shallow.length || unshallow.length ? [pkt('shallow-info\n'), ...shallow, ...unshallow, delim] : []), pkt('packfile\n'), sideband(pack)])
       : Buffer.concat([...shallow, ...unshallow, ...(shallow.length ? [flush] : []), pkt('NAK\n'), sideband(pack)]);
+    packs.set(responseKey, response);
   }
   res.writeHead(200, { 'content-type': `application/x-${service}-result`, 'content-length': response.length }); res.end(response);
 }
